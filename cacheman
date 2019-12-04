@@ -1,0 +1,51 @@
+#!/bin/python
+import os
+import subprocess
+import sys
+import tempfile
+
+# Both must be in a format acceptable for rsync
+remoteCacheDir = 'xian.matterhorn:/var/cache/pacman/pkg'
+localCacheDir = '/var/cache/pacman/pkg'
+
+
+def transferCache(pacArgs):
+    pacProc = subprocess.run(['sudo', 'pacman', '-p', '-q'] + pacArgs,
+                             capture_output=True)
+
+    if pacProc.returncode or not pacProc.stdout:
+        return
+
+    pkgNames = [fileUrl.split('/')[-1]
+                for fileUrl in pacProc.stdout.decode('utf-8').split(os.linesep)
+                if fileUrl.startswith('http')]
+
+    if pkgNames:
+        print("Attempting to retrieve files from cache {}"
+              .format(remoteCacheDir),  end="\n\t")
+        print(*pkgNames, sep="\n\t", end="\n\n")
+
+        # Create manifest file
+        with tempfile.NamedTemporaryFile('w+') as manifestFile:
+            print(*pkgNames, sep=os.linesep,
+                  file=manifestFile, flush=True)
+            with tempfile.TemporaryDirectory() as tempDir:
+                subprocess.run(['rsync', '--progress',
+                                '--files-from', manifestFile.name,
+                                remoteCacheDir, tempDir])
+                subprocess.run(['sudo', 'rsync', '-r',
+                                tempDir + os.sep, localCacheDir])
+
+
+if __name__ == '__main__':
+    assert 'sudo' not in sys.argv, 'Run without `sudo`!'
+
+    pacArgs = sys.argv[1:]
+
+    if not pacArgs:
+        print('Assuming `pacman -Syu`')
+        pacArgs = ['-Syu']
+
+    transferCache(pacArgs)
+
+    subprocess.run(['sudo', 'pacman'] + pacArgs)
